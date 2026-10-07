@@ -24,8 +24,11 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.catchingFlatMapBlocking
+import keiyoushi.utils.get
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.post
+import keiyoushi.utils.useAsJsoup
 import okhttp3.FormBody
 import okhttp3.Request
 import okhttp3.Response
@@ -144,8 +147,10 @@ class MonosChinos :
 
     // ====================== EPISODIOS ======================
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
+    override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val document = client.get(baseUrl + anime.url, headers).useAsJsoup()
         val referer = document.location()
 
         val ajaxUrl = document.selectFirst("section.caplist")?.attr("data-ajax")?.let {
@@ -154,21 +159,21 @@ class MonosChinos :
 
         val csrfToken = document.selectFirst("meta[name='csrf-token']")?.attr("content") ?: ""
 
-        fun ajaxPost(url: String, page: Int?): Request {
+        val ajaxHeaders = headers.newBuilder()
+            .set("Referer", referer)
+            .set("X-Requested-With", "XMLHttpRequest")
+            .set("Accept", "application/json, text/javascript, */*; q=0.01")
+            .build()
+
+        suspend fun ajaxPost(url: String, page: Int?): Response {
             val form = FormBody.Builder().add("_token", csrfToken)
             if (page != null) form.add("p", page.toString())
-            return Request.Builder()
-                .url(url)
-                .post(form.build())
-                .header("Referer", referer)
-                .header("X-Requested-With", "XMLHttpRequest")
-                .header("Accept", "application/json, text/javascript, */*; q=0.01")
-                .build()
+            return client.post(url, ajaxHeaders, form.build())
         }
 
         // The old endpoint now always answers with an empty list and points at
         // the real one through `paginate_url`, which pages with `p`.
-        val index = client.newCall(ajaxPost(ajaxUrl, null)).execute().parseAs<EpisodesDto>()
+        val index = ajaxPost(ajaxUrl, null).parseAs<EpisodesDto>()
         val listUrl = index.paginateUrl ?: return emptyList()
         val perPage = index.perpage ?: 0
 
@@ -176,7 +181,7 @@ class MonosChinos :
         var currentPage = 1
 
         while (currentPage <= MAX_EPISODE_PAGES) {
-            val caps = client.newCall(ajaxPost(listUrl, currentPage)).execute().parseAs<CapListDto>().caps
+            val caps = ajaxPost(listUrl, currentPage).parseAs<CapListDto>().caps
 
             caps.forEach { cap ->
                 val episodeNumber = cap.numStr.toFloatOrNull() ?: return@forEach
