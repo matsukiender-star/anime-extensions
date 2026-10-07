@@ -65,7 +65,7 @@ class MonosChinos :
             "LuluStream",
         )
 
-        private val EPISODE_SLUG_REGEX = Regex("-episodio-(\\d+|[\\d.]+)$")
+        private val EPISODE_SLUG_REGEX = Regex("-episodio-[\\d.]+$")
         private val QUALITY_REGEX = Regex("""(\d+)p""")
 
         private const val ANIME_CARD_SELECTOR = "a.card-wrap[href*=/anime/]"
@@ -81,9 +81,9 @@ class MonosChinos :
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val animeList = document.select(ANIME_CARD_SELECTOR).mapNotNull { element ->
+        val animeList = document.select(ANIME_CARD_SELECTOR).map { element ->
             SAnime.create().apply {
-                title = element.selectFirst("h3")?.text() ?: return@mapNotNull null
+                title = element.selectFirst("h3")!!.text()
                 thumbnail_url = element.selectFirst("img")?.getImageUrl()
                 setUrlWithoutDomain(element.attr("abs:href"))
             }
@@ -99,15 +99,14 @@ class MonosChinos :
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val animeList = document.select(EPISODE_CARD_SELECTOR).mapNotNull { element ->
+        val animeList = document.select(EPISODE_CARD_SELECTOR).map { element ->
             val episodeSlug = element.attr("abs:href").substringAfter("/ver/").substringBefore("?")
             SAnime.create().apply {
-                title = element.selectFirst("h3")?.text() ?: return@mapNotNull null
+                title = element.selectFirst("h3")!!.text()
                 setUrlWithoutDomain("/anime/${episodeSlug.replace(EPISODE_SLUG_REGEX, "")}-sub-espanol")
                 thumbnail_url = element.selectFirst("img")?.getImageUrl()
             }
         }
-        // The front page this always loads does not paginate.
         return AnimesPage(animeList, hasNextPage = false)
     }
 
@@ -129,7 +128,7 @@ class MonosChinos :
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         return SAnime.create().apply {
-            title = document.selectFirst("h1")?.text() ?: ""
+            title = document.selectFirst("h1")!!.text()
             description = document.selectFirst("h1 ~ p")?.text()
             // The page lists the genres twice, in the header and in the info tab.
             genre = document.select("a[href*=/genero/]").map { it.text() }.distinct().joinToString()
@@ -169,11 +168,7 @@ class MonosChinos :
 
         // The old endpoint now always answers with an empty list and points at
         // the real one through `paginate_url`, which pages with `p`.
-        val index = try {
-            client.newCall(ajaxPost(ajaxUrl, null)).execute().parseAs<EpisodesDto>()
-        } catch (_: Exception) {
-            return emptyList()
-        }
+        val index = client.newCall(ajaxPost(ajaxUrl, null)).execute().parseAs<EpisodesDto>()
         val listUrl = index.paginateUrl ?: return emptyList()
         val perPage = index.perpage ?: 0
 
@@ -181,11 +176,7 @@ class MonosChinos :
         var currentPage = 1
 
         while (currentPage <= MAX_EPISODE_PAGES) {
-            val caps = try {
-                client.newCall(ajaxPost(listUrl, currentPage)).execute().parseAs<CapListDto>().caps
-            } catch (_: Exception) {
-                break
-            }
+            val caps = client.newCall(ajaxPost(listUrl, currentPage)).execute().parseAs<CapListDto>().caps
 
             caps.forEach { cap ->
                 val episodeNumber = cap.numStr.toFloatOrNull() ?: return@forEach
@@ -247,17 +238,19 @@ class MonosChinos :
     private val luluExtractor by lazy { LuluExtractor(client, headers) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
+    // Aliases are matched as substrings of the URL, so each list keeps only the
+    // shortest form: a longer alias containing another one is never reached.
     private val conventions = listOf(
         "voe" to listOf("voe", "tubelessceliolymph", "simpulumlamerop", "urochsunloath", "nathanfromsubject", "yip.", "metagnathtuggers", "donaldlineelse"),
         "okru" to listOf("ok.ru", "okru"),
-        "filemoon" to listOf("filemoon", "moonplayer", "moviesm4u", "files.im", "filemoon.sx"),
+        "filemoon" to listOf("filemoon", "moonplayer", "moviesm4u", "files.im"),
         "uqload" to listOf("uqload"),
         "mp4upload" to listOf("mp4upload"),
-        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "kswplayer", "swhoi", "multimovies", "uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg"),
+        "streamwish" to listOf("wish", "kswplayer", "swhoi", "multimovies", "uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg"),
         "doodstream" to listOf("doodstream", "dood.", "ds2play", "doods.", "ds2video", "dooood", "d000d", "d0000d"),
         "mixdrop" to listOf("mixdrop"),
         "streamtape" to listOf("streamtape", "stp", "stape", "shavetape"),
-        "lulu" to listOf("luluvdo", "lulu", "lulustream"),
+        "lulu" to listOf("lulu"),
     )
 
     private suspend fun serverVideoResolver(url: String, serverName: String = ""): List<Video> {
